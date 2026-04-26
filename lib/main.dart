@@ -92,7 +92,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
         total += (entry.value['hours'] as num).toDouble();
       }
     }
-    _monthlyTotal = total;
+    setState(() {
+      _monthlyTotal = total;
+    });
   }
 
   void _onDaySelected(DateTime selectedDay, DateTime focusedDay) async {
@@ -101,10 +103,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
       _focusedDay = focusedDay;
     });
     
-    // 异步等待弹窗返回结果
     final dataChanged = await _showDetailDialog(selectedDay);
     
-    // 如果弹窗内按了保存，这里统一刷新 UI 即可，不需要以前那种闪烁 Hack
     if (dataChanged == true) {
       setState(() {
         _updateMonthlyTotal();
@@ -117,8 +117,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     final existing = _workData[dateStr];
     
     bool isRest = existing?['type'] == 'rest';
-    String startStr = '09:00';
-    String endStr = '18:00';
+    // ✅ 修改1：默认时间改为 08:00-17:00
+    String startStr = '08:00';
+    String endStr = '17:00';
     String breakStr = '1.0';
     String finalHoursStr = '0.0';
 
@@ -155,8 +156,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
               'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
             };
             _saveData();
-            
-            // 返回 true 通知外层刷新日历
             Navigator.pop(ctx, true);
           }
 
@@ -225,17 +224,20 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   const SizedBox(height: 16),
                   const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
                   const SizedBox(height: 8),
+                  // ✅ 修改2：去掉 readOnly，改为可编辑
                   TextField(
-                    readOnly: true,
                     decoration: InputDecoration(
                       filled: true, fillColor: Colors.white,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), 
                         borderSide: const BorderSide(color: Color(0xFF3B82F6))),
                       contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
                     ),
-                    controller: TextEditingController(text: '$finalHoursStr 小时'),
+                    controller: TextEditingController(text: '$finalHoursStr'),
                     style: const TextStyle(fontSize: 25, color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   ),
+                  const SizedBox(height: 4),
+                  const Text('小时', style: TextStyle(fontSize: 14, color: Colors.grey)),
                 ],
               ),
             ),
@@ -259,7 +261,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     );
   }
 
-  // 💡 核心修复点：提取出一个统一的单元格构建器
   Widget _buildCalendarCell(BuildContext context, DateTime day, DateTime focusedDay) {
     final dateStr = _formatDate(day);
     final isOtherMonth = day.month != focusedDay.month;
@@ -269,10 +270,11 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
 
     return Container(
       margin: const EdgeInsets.all(2),
+      // ✅ 修改3：增加最小高度防止重叠
+      constraints: const BoxConstraints(minHeight: 60),
       decoration: BoxDecoration(
         color: isSelected ? const Color(0xFFDBEAFE) : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
-        // 如果是今天，额外加一个边框方便识别
         border: isToday && !isSelected ? Border.all(color: const Color(0xFF3B82F6), width: 1.5) : null,
       ),
       child: Column(
@@ -335,17 +337,23 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 },
                 locale: 'zh_CN',
                 availableGestures: AvailableGestures.all,
+                // ✅ 修改4：调整头部样式，增加高度防止重叠
                 headerStyle: const HeaderStyle(
                   formatButtonVisible: false, 
                   titleCentered: true,
                   titleTextStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  headerPadding: EdgeInsets.symmetric(vertical: 12),
                 ),
+                // ✅ 修改5：调整星期标题样式
                 daysOfWeekStyle: const DaysOfWeekStyle(
-                  weekdayStyle: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w600),
-                  weekendStyle: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600),
+                  weekdayStyle: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w600, fontSize: 14),
+                  weekendStyle: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                // ✅ 修改6：调整日历样式，增加单元格高度
+                calendarStyle: const CalendarStyle(
+                  cellPadding: EdgeInsets.symmetric(vertical: 8),
                 ),
                 
-                // 💡 把所有的状态构建器都指向同一个 UI 设计，这样就不会覆盖消失了
                 calendarBuilders: CalendarBuilders(
                   defaultBuilder: _buildCalendarCell,
                   selectedBuilder: _buildCalendarCell,
