@@ -8,5 +8,7 @@ dependencies:
     sdk: flutter
   table_calendar: ^3.0.9
   path_provider: ^2.1.1
+  flutter_localizations:
+    sdk: flutter
 flutter:
   uses-material-design: true
