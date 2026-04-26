@@ -54,9 +54,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   double _monthlyTotal = 0.0;
-  
-  // 🔧 数据版本号，每次保存 +1，用于打破 Flutter 组件缓存
-  int _dataVersion = 0;
 
   @override
   void initState() {
@@ -140,17 +137,31 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             setDialogState(() {});
           }
 
+          // 🔧 终极修复：保存逻辑
           void save() {
-            setState(() {
-              _workData[dateStr] = {
-                'type': isRest ? 'rest' : 'work',
-                'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
-              };
-              _dataVersion++; // 🔧 递增版本号，强制所有单元格丢弃缓存
-            });
+            // 1. 更新数据
+            _workData[dateStr] = {
+              'type': isRest ? 'rest' : 'work',
+              'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
+            };
+            
+            // 2. 异步保存文件
             _saveData();
             _updateMonthlyTotal();
+            
+            // 3. 关闭弹窗
             Navigator.pop(ctx);
+
+            // 4. 核心修复：通过切换选中状态强制 TableCalendar 刷新
+            // 先设为 null，欺骗日历组件认为状态变了，从而重绘所有单元格
+            setState(() => _selectedDay = null);
+            
+            // 延迟 100ms 后恢复选中状态，保持高亮体验，用户几乎感觉不到闪烁
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (mounted) {
+                setState(() => _selectedDay = date);
+              }
+            });
           }
 
           return AlertDialog(
@@ -270,8 +281,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             ),
             Expanded(
               child: TableCalendar(
-                // 🔧 绑定数据版本号到日历整体 Key
-                key: ValueKey(_dataVersion),
                 firstDay: DateTime.utc(2020, 1, 1),
                 lastDay: DateTime.utc(2035, 12, 31),
                 focusedDay: _focusedDay,
@@ -294,9 +303,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   weekendStyle: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600),
                 ),
                 calendarStyle: const CalendarStyle(
-                  // 🔧 禁用内部选中样式，完全交由 defaultBuilder 控制，防止覆盖
-                  selectedDecoration: BoxDecoration(), 
-                  selectedTextStyle: TextStyle(),
+                  selectedDecoration: BoxDecoration(color: Color(0xFFDBEAFE), shape: BoxShape.circle),
+                  selectedTextStyle: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
                   todayDecoration: BoxDecoration(color: Color(0xFFDBEAFE), shape: BoxShape.circle),
                   todayTextStyle: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
                   weekendTextStyle: TextStyle(color: Color(0xFF10B981)),
@@ -307,15 +315,12 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                     final dateStr = _formatDate(day);
                     final isOtherMonth = day.month != focusedDay.month;
                     final isToday = isSameDay(day, DateTime.now());
-                    final isSelected = isSameDay(day, _selectedDay);
                     final data = _workData[dateStr];
 
-                    // 🔧 核心修复：为每个单元格提供唯一 Key，彻底阻断 Flutter 组件复用导致的错位
                     return Container(
-                      key: ValueKey('${dateStr}_$_dataVersion'),
                       margin: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
-                        color: isSelected ? const Color(0xFFDBEAFE) : Colors.transparent,
+                        color: isSameDay(day, _selectedDay) ? const Color(0xFFDBEAFE) : Colors.transparent,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Column(
