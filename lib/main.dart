@@ -59,6 +59,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   double _monthlyTotal = 0.0;
+  
+  // 新增：用于强制刷新日历的 Key
+  int _calendarRefreshKey = 0;
 
   @override
   void initState() {
@@ -145,6 +148,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 'type': isRest ? 'rest' : 'work',
                 'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
               };
+              // 关键修复：每次保存增加 Key 值，强制日历组件重绘
+              _calendarRefreshKey++; 
             });
             _saveData();
             _updateMonthlyTotal();
@@ -271,6 +276,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             
             Expanded(
               child: TableCalendar(
+                // 关键修复：使用 ValueKey 强制日历组件重绘
+                key: ValueKey(_calendarRefreshKey),
                 firstDay: DateTime.utc(2020, 1, 1),
                 lastDay: DateTime.utc(2035, 12, 31),
                 focusedDay: _focusedDay,
@@ -281,7 +288,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   setState(() => _focusedDay = focusedDay);
                   _updateMonthlyTotal();
                 },
-                // 中文本地化
                 locale: 'zh_CN',
                 availableGestures: AvailableGestures.all,
                 headerStyle: const HeaderStyle(
