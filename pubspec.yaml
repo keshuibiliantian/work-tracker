@@ -1,15 +1,29 @@
 name: work_tracker
 description: 记工时APP
-version: 1.0.0
+version: 1.0.0+1
+
 environment:
   sdk: '>=3.0.0 <4.0.0'
+
 dependencies:
   flutter:
     sdk: flutter
-  table_calendar: ^3.0.9
-  path_provider: ^2.1.1
   flutter_localizations:
     sdk: flutter
+  table_calendar: ^3.0.9
+  path_provider: ^2.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+
 flutter:
   uses-material-design: true
   generate: true
