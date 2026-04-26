@@ -8,9 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // 锁定竖屏
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  // 沉浸式状态栏
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
@@ -25,17 +23,13 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '记工时',
-      // 中文本地化配置
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [
-        Locale('zh', 'CN'),
-      ],
+      supportedLocales: const [Locale('zh', 'CN')],
       locale: const Locale('zh', 'CN'),
-      
       theme: ThemeData(
         fontFamily: 'sans-serif',
         colorSchemeSeed: const Color(0xFF3B82F6),
@@ -61,8 +55,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   DateTime? _selectedDay;
   double _monthlyTotal = 0.0;
   
-  // 🔧 核心修复：用于强制刷新日历的 Key
-  int _calendarRefreshKey = 0;
+  // 🔧 数据版本号，每次保存 +1，用于打破 Flutter 组件缓存
+  int _dataVersion = 0;
 
   @override
   void initState() {
@@ -116,7 +110,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     final dateStr = _formatDate(date);
     final existing = _workData[dateStr];
     
-    // 初始化弹窗状态
     bool isRest = existing?['type'] == 'rest';
     String startStr = '09:00';
     String endStr = '18:00';
@@ -124,54 +117,39 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     String finalHoursStr = '0.0';
 
     if (existing != null) {
-      if (existing['type'] == 'rest') {
-        isRest = true;
-        finalHoursStr = '0.0';
-      } else {
-        isRest = false;
-        finalHoursStr = (existing['hours'] as num).toString();
-      }
+      isRest = existing['type'] == 'rest';
+      finalHoursStr = isRest ? '0.0' : (existing['hours'] as num).toString();
     }
 
     await showDialog(
       context: context,
-      barrierDismissible: true, // 允许点击空白关闭
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
-          // 时间转秒数
           double _parseTime(String t) {
             final p = t.split(':');
             return (int.tryParse(p[0]) ?? 0) * 3600 + (int.tryParse(p[1]) ?? 0) * 60;
           }
 
-          // 计算工时逻辑
           void calcHours() {
             double s = _parseTime(startStr);
             double e = _parseTime(endStr);
             double diff = e - s;
-            if (diff < 0) diff += 86400; // 跨午夜处理
+            if (diff < 0) diff += 86400;
             double h = diff / 3600.0 - (double.tryParse(breakStr) ?? 0);
             finalHoursStr = h < 0 ? '0.0' : h.toStringAsFixed(1);
             setDialogState(() {});
           }
 
-          // 🔧 核心修复：保存逻辑
           void save() {
-            // 1. 立即更新主界面状态
             setState(() {
               _workData[dateStr] = {
                 'type': isRest ? 'rest' : 'work',
                 'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
               };
-              // 2. 递增 Key，强制 TableCalendar 重建，解决不刷新问题
-              _calendarRefreshKey++;
+              _dataVersion++; // 🔧 递增版本号，强制所有单元格丢弃缓存
             });
-            
-            // 3. 保存文件
             _saveData();
             _updateMonthlyTotal();
-            
-            // 4. 关闭弹窗
             Navigator.pop(ctx);
           }
 
@@ -201,7 +179,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  
                   if (!isRest)
                     Container(
                       padding: const EdgeInsets.all(16),
@@ -293,8 +270,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             ),
             Expanded(
               child: TableCalendar(
-                // 🔑 核心修复：绑定 Key，每次数据变化都会导致日历完全重绘
-                key: ValueKey(_calendarRefreshKey),
+                // 🔧 绑定数据版本号到日历整体 Key
+                key: ValueKey(_dataVersion),
                 firstDay: DateTime.utc(2020, 1, 1),
                 lastDay: DateTime.utc(2035, 12, 31),
                 focusedDay: _focusedDay,
@@ -307,8 +284,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 },
                 locale: 'zh_CN',
                 availableGestures: AvailableGestures.all,
-                // 辅助刷新机制
-                eventLoader: (day) => [_formatDate(day)], 
                 headerStyle: const HeaderStyle(
                   formatButtonVisible: false, 
                   titleCentered: true,
@@ -318,12 +293,14 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   weekdayStyle: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w600),
                   weekendStyle: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600),
                 ),
-                calendarStyle: CalendarStyle(
-                  selectedDecoration: const BoxDecoration(color: Color(0xFFDBEAFE), shape: BoxShape.circle),
-                  selectedTextStyle: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
-                  todayTextStyle: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
-                  weekendTextStyle: const TextStyle(color: Color(0xFF10B981)),
-                  markerDecoration: const BoxDecoration(), // 隐藏默认圆点
+                calendarStyle: const CalendarStyle(
+                  // 🔧 禁用内部选中样式，完全交由 defaultBuilder 控制，防止覆盖
+                  selectedDecoration: BoxDecoration(), 
+                  selectedTextStyle: TextStyle(),
+                  todayDecoration: BoxDecoration(color: Color(0xFFDBEAFE), shape: BoxShape.circle),
+                  todayTextStyle: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
+                  weekendTextStyle: TextStyle(color: Color(0xFF10B981)),
+                  markerDecoration: BoxDecoration(),
                 ),
                 calendarBuilders: CalendarBuilders(
                   defaultBuilder: (context, day, focusedDay) {
@@ -333,7 +310,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                     final isSelected = isSameDay(day, _selectedDay);
                     final data = _workData[dateStr];
 
+                    // 🔧 核心修复：为每个单元格提供唯一 Key，彻底阻断 Flutter 组件复用导致的错位
                     return Container(
+                      key: ValueKey('${dateStr}_$_dataVersion'),
                       margin: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
                         color: isSelected ? const Color(0xFFDBEAFE) : Colors.transparent,
@@ -351,7 +330,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                                   : const Color(0xFF1E293B),
                             ),
                           ),
-                          // 显示工时逻辑：只要有数据就显示，不受选中状态影响
                           if (data != null) ...[
                             const SizedBox(height: 4),
                             Text(
@@ -393,7 +371,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   }
 }
 
-// 辅助输入控件
 class _TimeInputField extends StatelessWidget {
   final String text;
   final ValueChanged<String> onChanged;
