@@ -116,16 +116,20 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     final dateStr = _formatDate(date);
     final existing = _workData[dateStr];
     
-    bool isRest = existing?['type'] == 'rest';
-    // ✅ 修改1：默认时间改为 08:00-17:00
     String startStr = '08:00';
     String endStr = '17:00';
     String breakStr = '1.0';
     String finalHoursStr = '0.0';
 
     if (existing != null) {
-      isRest = existing['type'] == 'rest';
-      finalHoursStr = isRest ? '0.0' : (existing['hours'] as num).toString();
+      final hours = existing['hours'] as num;
+      final type = existing['type'] as String;
+      // 根据保存的数据恢复状态
+      if (type == 'rest' || hours == 0) {
+        finalHoursStr = '0.0';
+      } else {
+        finalHoursStr = hours.toString();
+      }
     }
 
     return await showDialog<bool>(
@@ -150,10 +154,14 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             setDialogState(() {});
           }
 
+          // ✅ 核心修复：保存时以最终工时框的值为准
           void save() {
+            final hours = double.tryParse(finalHoursStr) ?? 0.0;
+            
             _workData[dateStr] = {
-              'type': isRest ? 'rest' : 'work',
-              'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
+              // 工时>0就是上班，工时=0就是休息
+              'type': hours > 0 ? 'work' : 'rest',
+              'hours': hours,
             };
             _saveData();
             Navigator.pop(ctx, true);
@@ -175,56 +183,57 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                     decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
                     child: Row(
                       children:[
-                        Radio<String>(value: 'work', groupValue: isRest ? 'rest' : 'work', 
-                          onChanged: (v) => setDialogState(() => isRest = false)),
-                        const Text('上班', style: TextStyle(fontSize: 18)),
-                        Radio<String>(value: 'rest', groupValue: isRest ? 'rest' : 'work', 
-                          onChanged: (v) => setDialogState(() => isRest = true)),
-                        const Text('休息', style: TextStyle(fontSize: 18)),
+                        // 只显示提示，不再用单选框控制逻辑
+                        Expanded(
+                          child: Text(
+                            '💡 提示：工时>0为上班，工时=0为休息',
+                            style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 16),
-                  if (!isRest)
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children:[
-                          const Text('🕒 工作时间范围', style: TextStyle(fontSize: 16)),
-                          Row(
-                            children:[
-                              Expanded(child: _TimeInputField(initialText: startStr, onChanged: (v) => startStr = v)),
-                              const SizedBox(width: 10),
-                              const Text('至'),
-                              const SizedBox(width: 10),
-                              Expanded(child: _TimeInputField(initialText: endStr, onChanged: (v) => endStr = v)),
-                            ],
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children:[
+                        const Text('🕒 工作时间范围（可选计算）', style: TextStyle(fontSize: 16)),
+                        Row(
+                          children:[
+                            Expanded(child: _TimeInputField(initialText: startStr, onChanged: (v) => startStr = v)),
+                            const SizedBox(width: 10),
+                            const Text('至'),
+                            const SizedBox(width: 10),
+                            Expanded(child: _TimeInputField(initialText: endStr, onChanged: (v) => endStr = v)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Text('☕ 中途休息 (小时)'),
+                        _TimeInputField(initialText: breakStr, onChanged: (v) => breakStr = v, numeric: true),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFEFF6FF), 
+                              foregroundColor: const Color(0xFF3B82F6), 
+                              textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            onPressed: calcHours,
+                            child: const Text('计算并填入'),
                           ),
-                          const SizedBox(height: 12),
-                          const Text('☕ 中途休息 (小时)'),
-                          _TimeInputField(initialText: breakStr, onChanged: (v) => breakStr = v, numeric: true),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFEFF6FF), 
-                                foregroundColor: const Color(0xFF3B82F6), 
-                                textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                              onPressed: calcHours,
-                              child: const Text('计算并填入'),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text('或直接手动输入下方工时', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                      ],
                     ),
+                  ),
                   const SizedBox(height: 16),
                   const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
                   const SizedBox(height: 8),
-                  // ✅ 修改2：去掉 readOnly，改为可编辑
                   TextField(
                     decoration: InputDecoration(
                       filled: true, fillColor: Colors.white,
@@ -232,12 +241,15 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                         borderSide: const BorderSide(color: Color(0xFF3B82F6))),
                       contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
                     ),
-                    controller: TextEditingController(text: '$finalHoursStr'),
+                    controller: TextEditingController(text: finalHoursStr),
+                    onChanged: (value) {
+                      finalHoursStr = value;
+                    },
                     style: const TextStyle(fontSize: 25, color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   ),
                   const SizedBox(height: 4),
-                  const Text('小时', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                  const Text('小时（输入0表示休息）', style: TextStyle(fontSize: 14, color: Colors.grey)),
                 ],
               ),
             ),
@@ -270,7 +282,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
 
     return Container(
       margin: const EdgeInsets.all(2),
-      // ✅ 修改3：增加最小高度防止重叠
       constraints: const BoxConstraints(minHeight: 60),
       decoration: BoxDecoration(
         color: isSelected ? const Color(0xFFDBEAFE) : Colors.transparent,
@@ -337,19 +348,16 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 },
                 locale: 'zh_CN',
                 availableGestures: AvailableGestures.all,
-                // ✅ 修改4：调整头部样式，增加高度防止重叠
                 headerStyle: const HeaderStyle(
                   formatButtonVisible: false, 
                   titleCentered: true,
                   titleTextStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                   headerPadding: EdgeInsets.symmetric(vertical: 12),
                 ),
-                // ✅ 修改5：调整星期标题样式
                 daysOfWeekStyle: const DaysOfWeekStyle(
                   weekdayStyle: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w600, fontSize: 14),
                   weekendStyle: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600, fontSize: 14),
                 ),
-                // ✅ 修改6：调整日历样式，增加单元格高度
                 calendarStyle: const CalendarStyle(
                   cellPadding: EdgeInsets.symmetric(vertical: 8),
                 ),
