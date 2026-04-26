@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 强制竖屏 + 沉浸式状态栏（贴合原代码全屏需求）
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -97,6 +98,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     final dateStr = _formatDate(date);
     final existing = _workData[dateStr];
     
+    // 初始状态
     bool isRest = existing?['type'] == 'rest';
     String startStr = '09:00';
     String endStr = '18:00';
@@ -146,6 +148,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // 状态选择
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
@@ -160,6 +163,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   ),
                   const SizedBox(height: 16),
                   
+                  // 计算区域
                   if (!isRest)
                     Container(
                       padding: const EdgeInsets.all(16),
@@ -195,6 +199,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                     ),
                   const SizedBox(height: 16),
                   
+                  // 最终工时
                   const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
                   const SizedBox(height: 8),
                   TextField(
@@ -234,6 +239,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
       body: SafeArea(
         child: Column(
           children: [
+            // Header
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 24),
@@ -241,6 +247,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
               child: const Center(child: Text('记工时', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold))),
             ),
             
+            // Calendar
             Expanded(
               child: TableCalendar(
                 firstDay: DateTime.utc(2020, 1, 1),
@@ -301,6 +308,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
               ),
             ),
             
+            // Monthly Total Panel
             Container(
               margin: const EdgeInsets.fromLTRB(20, 10, 20, 30),
               padding: const EdgeInsets.all(20),
@@ -320,6 +328,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   }
 }
 
+// 辅助输入控件
 class _TimeInputField extends StatelessWidget {
   final String text;
   final ValueChanged<String> onChanged;
