@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '记工时',
-      localizationsDelegates: const [
+      localizationsDelegates: const[
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
@@ -92,7 +92,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
         total += (entry.value['hours'] as num).toDouble();
       }
     }
-    setState(() => _monthlyTotal = total);
+    _monthlyTotal = total;
   }
 
   void _onDaySelected(DateTime selectedDay, DateTime focusedDay) async {
@@ -101,26 +101,204 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
       _focusedDay = focusedDay;
     });
     
-    // ✅ 优化1：等待对话框返回结果后再刷新，移除Hack
-    final result = await _showDetailDialog(selectedDay);
-    if (result != null && mounted) {
+    // 异步等待弹窗返回结果
+    final dataChanged = await _showDetailDialog(selectedDay);
+    
+    // 如果弹窗内按了保存，这里统一刷新 UI 即可，不需要以前那种闪烁 Hack
+    if (dataChanged == true) {
       setState(() {
-        _workData[_formatDate(selectedDay)] = result;
+        _updateMonthlyTotal();
       });
-      await _saveData();
-      _updateMonthlyTotal();
     }
   }
 
-  Future<Map<String, dynamic>?> _showDetailDialog(DateTime date) async {
+  Future<bool?> _showDetailDialog(DateTime date) async {
     final dateStr = _formatDate(date);
     final existing = _workData[dateStr];
     
-    return showDialog<Map<String, dynamic>>(
+    bool isRest = existing?['type'] == 'rest';
+    String startStr = '09:00';
+    String endStr = '18:00';
+    String breakStr = '1.0';
+    String finalHoursStr = '0.0';
+
+    if (existing != null) {
+      isRest = existing['type'] == 'rest';
+      finalHoursStr = isRest ? '0.0' : (existing['hours'] as num).toString();
+    }
+
+    return await showDialog<bool>(
       context: context,
-      builder: (ctx) => WorkDetailDialog(
-        date: date,
-        initialData: existing,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          double parseTime(String t) {
+            if (t.isEmpty) return 0;
+            final p = t.split(':');
+            final h = (int.tryParse(p[0]) ?? 0) * 3600.0;
+            final m = p.length > 1 ? (int.tryParse(p[1]) ?? 0) * 60.0 : 0.0;
+            return h + m;
+          }
+
+          void calcHours() {
+            double s = parseTime(startStr);
+            double e = parseTime(endStr);
+            double diff = e - s;
+            if (diff < 0) diff += 86400; 
+            double h = diff / 3600.0 - (double.tryParse(breakStr) ?? 0);
+            finalHoursStr = h < 0 ? '0.0' : h.toStringAsFixed(1);
+            setDialogState(() {});
+          }
+
+          void save() {
+            _workData[dateStr] = {
+              'type': isRest ? 'rest' : 'work',
+              'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
+            };
+            _saveData();
+            
+            // 返回 true 通知外层刷新日历
+            Navigator.pop(ctx, true);
+          }
+
+          return AlertDialog(
+            titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+            contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text('${date.month}月${date.day}日 工时详情', 
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children:[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
+                    child: Row(
+                      children:[
+                        Radio<String>(value: 'work', groupValue: isRest ? 'rest' : 'work', 
+                          onChanged: (v) => setDialogState(() => isRest = false)),
+                        const Text('上班', style: TextStyle(fontSize: 18)),
+                        Radio<String>(value: 'rest', groupValue: isRest ? 'rest' : 'work', 
+                          onChanged: (v) => setDialogState(() => isRest = true)),
+                        const Text('休息', style: TextStyle(fontSize: 18)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (!isRest)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children:[
+                          const Text('🕒 工作时间范围', style: TextStyle(fontSize: 16)),
+                          Row(
+                            children:[
+                              Expanded(child: _TimeInputField(initialText: startStr, onChanged: (v) => startStr = v)),
+                              const SizedBox(width: 10),
+                              const Text('至'),
+                              const SizedBox(width: 10),
+                              Expanded(child: _TimeInputField(initialText: endStr, onChanged: (v) => endStr = v)),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          const Text('☕ 中途休息 (小时)'),
+                          _TimeInputField(initialText: breakStr, onChanged: (v) => breakStr = v, numeric: true),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFEFF6FF), 
+                                foregroundColor: const Color(0xFF3B82F6), 
+                                textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              onPressed: calcHours,
+                              child: const Text('计算并填入'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    readOnly: true,
+                    decoration: InputDecoration(
+                      filled: true, fillColor: Colors.white,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), 
+                        borderSide: const BorderSide(color: Color(0xFF3B82F6))),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                    ),
+                    controller: TextEditingController(text: '$finalHoursStr 小时'),
+                    style: const TextStyle(fontSize: 25, color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            actions:[
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF3B82F6), 
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  onPressed: save,
+                  child: const Text('确认保存', 
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // 💡 核心修复点：提取出一个统一的单元格构建器
+  Widget _buildCalendarCell(BuildContext context, DateTime day, DateTime focusedDay) {
+    final dateStr = _formatDate(day);
+    final isOtherMonth = day.month != focusedDay.month;
+    final isToday = isSameDay(day, DateTime.now());
+    final isSelected = isSameDay(day, _selectedDay);
+    final data = _workData[dateStr];
+
+    return Container(
+      margin: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: isSelected ? const Color(0xFFDBEAFE) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        // 如果是今天，额外加一个边框方便识别
+        border: isToday && !isSelected ? Border.all(color: const Color(0xFF3B82F6), width: 1.5) : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children:[
+          Text(
+            '${day.day}',
+            style: TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold,
+              color: isOtherMonth ? const Color(0xFFCBD5E1) 
+                  : isSelected ? const Color(0xFF3B82F6) 
+                  : isToday ? const Color(0xFF3B82F6) 
+                  : const Color(0xFF1E293B),
+            ),
+          ),
+          if (data != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              data['type'] == 'work' && (data['hours'] as num) > 0 ? '${data['hours']}h' : '休',
+              style: TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600,
+                color: data['type'] == 'work' ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -131,7 +309,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
       backgroundColor: const Color(0xFFF1F5F9),
       body: SafeArea(
         child: Column(
-          children: [
+          children:[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 24),
@@ -150,8 +328,10 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 calendarFormat: _calendarFormat,
                 onDaySelected: _onDaySelected,
                 onPageChanged: (focusedDay) {
-                  setState(() => _focusedDay = focusedDay);
-                  _updateMonthlyTotal();
+                  setState(() {
+                    _focusedDay = focusedDay;
+                    _updateMonthlyTotal();
+                  });
                 },
                 locale: 'zh_CN',
                 availableGestures: AvailableGestures.all,
@@ -164,54 +344,15 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   weekdayStyle: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w600),
                   weekendStyle: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w600),
                 ),
-                calendarStyle: const CalendarStyle(
-                  selectedDecoration: BoxDecoration(color: Color(0xFFDBEAFE), shape: BoxShape.circle),
-                  selectedTextStyle: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
-                  todayDecoration: BoxDecoration(color: Color(0xFFDBEAFE), shape: BoxShape.circle),
-                  todayTextStyle: TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
-                  weekendTextStyle: TextStyle(color: Color(0xFF10B981)),
-                  markerDecoration: BoxDecoration(),
-                ),
+                
+                // 💡 把所有的状态构建器都指向同一个 UI 设计，这样就不会覆盖消失了
                 calendarBuilders: CalendarBuilders(
-                  defaultBuilder: (context, day, focusedDay) {
-                    final dateStr = _formatDate(day);
-                    final isOtherMonth = day.month != focusedDay.month;
-                    final isToday = isSameDay(day, DateTime.now());
-                    final data = _workData[dateStr];
-
-                    return Container(
-                      margin: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: isSameDay(day, _selectedDay) ? const Color(0xFFDBEAFE) : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            '${day.day}',
-                            style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold,
-                              color: isOtherMonth ? const Color(0xFFCBD5E1) 
-                                  : isToday ? const Color(0xFF3B82F6) 
-                                  : const Color(0xFF1E293B),
-                            ),
-                          ),
-                          if (data != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              data['type'] == 'work' && (data['hours'] as num) > 0 ? '${data['hours']}h' : '休',
-                              style: TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w600,
-                                color: data['type'] == 'work' ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    );
-                  },
+                  defaultBuilder: _buildCalendarCell,
+                  selectedBuilder: _buildCalendarCell,
+                  todayBuilder: _buildCalendarCell,
+                  outsideBuilder: _buildCalendarCell,
                 ),
+                
               ),
             ),
             Container(
@@ -220,10 +361,10 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
               decoration: BoxDecoration(
                 color: Colors.white, 
                 borderRadius: BorderRadius.circular(20), 
-                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+                boxShadow: const[BoxShadow(color: Colors.black12, blurRadius: 10)],
               ),
               child: Column(
-                children: [
+                children:[
                   const Text('本月累计总工时', style: TextStyle(fontSize: 16, color: Colors.grey)),
                   const SizedBox(height: 8),
                   Text('${_monthlyTotal.toStringAsFixed(1)} 小时', 
@@ -238,28 +379,30 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   }
 }
 
-// ✅ 优化2：改为StatefulWidget，避免Controller重复创建
+class _TimeInputField extends StatefulWidget {
+  final String initialText;
+  final ValueChanged<String> onChanged;
+  final bool numeric;
+  
+  const _TimeInputField({required this.initialText, required this.onChanged, this.numeric = false});
+
+  @override
+  State<_TimeInputField> createState() => _TimeInputFieldState();
+}
+
 class _TimeInputFieldState extends State<_TimeInputField> {
   late TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.text);
+    _controller = TextEditingController(text: widget.initialText);
   }
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(_TimeInputField oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) {
-      _controller.text = widget.text;
-    }
   }
 
   @override
@@ -275,185 +418,6 @@ class _TimeInputFieldState extends State<_TimeInputField> {
         contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
       ),
       style: const TextStyle(fontSize: 18),
-    );
-  }
-}
-
-class _TimeInputField extends StatefulWidget {
-  final String text;
-  final ValueChanged<String> onChanged;
-  final bool numeric;
-  
-  const _TimeInputField({
-    required this.text,
-    required this.onChanged,
-    this.numeric = false,
-  });
-
-  @override
-  State<_TimeInputField> createState() => _TimeInputFieldState();
-}
-
-// 独立的对话框组件
-class WorkDetailDialog extends StatefulWidget {
-  final DateTime date;
-  final Map<String, dynamic>? initialData;
-
-  const WorkDetailDialog({
-    super.key,
-    required this.date,
-    this.initialData,
-  });
-
-  @override
-  State<WorkDetailDialog> createState() => _WorkDetailDialogState();
-}
-
-class _WorkDetailDialogState extends State<WorkDetailDialog> {
-  late bool _isRest;
-  late String _startStr;
-  late String _endStr;
-  late String _breakStr;
-  late String _finalHoursStr;
-
-  @override
-  void initState() {
-    super.initState();
-    final existing = widget.initialData;
-    if (existing != null) {
-      _isRest = existing['type'] == 'rest';
-      _finalHoursStr = _isRest ? '0.0' : (existing['hours'] as num).toString();
-    } else {
-      _isRest = false;
-      _finalHoursStr = '0.0';
-    }
-    _startStr = '09:00';
-    _endStr = '18:00';
-    _breakStr = '1.0';
-  }
-
-  double _parseTime(String t) {
-    final p = t.split(':');
-    // ✅ 优化3：增强容错性，防止数组越界
-    final hours = int.tryParse(p.isNotEmpty ? p[0] : '0') ?? 0;
-    final minutes = int.tryParse(p.length > 1 ? p[1] : '0') ?? 0;
-    return hours * 3600 + minutes * 60;
-  }
-
-  void _calculateHours() {
-    double s = _parseTime(_startStr);
-    double e = _parseTime(_endStr);
-    double diff = e - s;
-    if (diff < 0) diff += 86400;
-    double h = diff / 3600.0 - (double.tryParse(_breakStr) ?? 0);
-    setState(() {
-      _finalHoursStr = h < 0 ? '0.0' : h.toStringAsFixed(1);
-    });
-  }
-
-  void _save() {
-    final result = {
-      'type': _isRest ? 'rest' : 'work',
-      'hours': _isRest ? 0 : (double.tryParse(_finalHoursStr) ?? 0),
-    };
-    Navigator.pop(context, result);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-      contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-      actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Text('${widget.date.month}月${widget.date.day}日 工时详情', 
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
-              child: Row(
-                children: [
-                  Radio<bool>(value: false, groupValue: _isRest, 
-                    onChanged: (v) => setState(() => _isRest = false)),
-                  const Text('上班', style: TextStyle(fontSize: 18)),
-                  Radio<bool>(value: true, groupValue: _isRest, 
-                    onChanged: (v) => setState(() => _isRest = true)),
-                  const Text('休息', style: TextStyle(fontSize: 18)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (!_isRest)
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('🕒 工作时间范围', style: TextStyle(fontSize: 16)),
-                    Row(
-                      children: [
-                        Expanded(child: _TimeInputField(text: _startStr, onChanged: (v) => setState(() => _startStr = v))),
-                        const SizedBox(width: 10),
-                        const Text('至'),
-                        const SizedBox(width: 10),
-                        Expanded(child: _TimeInputField(text: _endStr, onChanged: (v) => setState(() => _endStr = v))),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('☕ 中途休息 (小时)'),
-                    _TimeInputField(text: _breakStr, onChanged: (v) => setState(() => _breakStr = v), numeric: true),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFEFF6FF), 
-                          foregroundColor: const Color(0xFF3B82F6), 
-                          textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        onPressed: _calculateHours,
-                        child: const Text('计算并填入'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 16),
-            const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
-            const SizedBox(height: 8),
-            TextField(
-              readOnly: true,
-              decoration: InputDecoration(
-                filled: true, fillColor: Colors.white,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), 
-                  borderSide: const BorderSide(color: Color(0xFF3B82F6))),
-                contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-              ),
-              controller: TextEditingController(text: '$_finalHoursStr 小时'),
-              style: const TextStyle(fontSize: 25, color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF3B82F6), 
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-            onPressed: _save,
-            child: const Text('确认保存', 
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-          ),
-        ),
-      ],
     );
   }
 }
