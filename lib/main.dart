@@ -23,8 +23,6 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '记工时',
-      
-      // 中文本地化配置
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -34,7 +32,6 @@ class MyApp extends StatelessWidget {
         Locale('zh', 'CN'),
       ],
       locale: const Locale('zh', 'CN'),
-      
       theme: ThemeData(
         fontFamily: 'sans-serif',
         colorSchemeSeed: const Color(0xFF3B82F6),
@@ -59,8 +56,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   double _monthlyTotal = 0.0;
-  
-  // 新增：用于强制刷新日历的 Key
   int _calendarRefreshKey = 0;
 
   @override
@@ -125,6 +120,7 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
 
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           double _parseTime(String t) {
@@ -142,18 +138,28 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             setDialogState(() {});
           }
 
-          void save() {
-            setState(() {
-              _workData[dateStr] = {
-                'type': isRest ? 'rest' : 'work',
-                'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
-              };
-              // 关键修复：每次保存增加 Key 值，强制日历组件重绘
-              _calendarRefreshKey++; 
-            });
-            _saveData();
-            _updateMonthlyTotal();
+          void save() async {
+            // 先关闭对话框
             Navigator.pop(ctx);
+            
+            // 强制等待一帧，确保对话框完全关闭
+            await Future.delayed(const Duration(milliseconds: 100));
+            
+            // 然后更新数据并刷新
+            if (mounted) {
+              setState(() {
+                _workData[dateStr] = {
+                  'type': isRest ? 'rest' : 'work',
+                  'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
+                };
+                _calendarRefreshKey++;
+              });
+              await _saveData();
+              _updateMonthlyTotal();
+              
+              // 再次强制刷新
+              setState(() {});
+            }
           }
 
           return AlertDialog(
@@ -276,7 +282,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             
             Expanded(
               child: TableCalendar(
-                // 关键修复：使用 ValueKey 强制日历组件重绘
                 key: ValueKey(_calendarRefreshKey),
                 firstDay: DateTime.utc(2020, 1, 1),
                 lastDay: DateTime.utc(2035, 12, 31),
