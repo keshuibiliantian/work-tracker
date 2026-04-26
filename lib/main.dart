@@ -28,9 +28,7 @@ class MyApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [
-        Locale('zh', 'CN'),
-      ],
+      supportedLocales: const [Locale('zh', 'CN')],
       locale: const Locale('zh', 'CN'),
       theme: ThemeData(
         fontFamily: 'sans-serif',
@@ -45,7 +43,6 @@ class MyApp extends StatelessWidget {
 
 class WorkTrackerApp extends StatefulWidget {
   const WorkTrackerApp({super.key});
-  
   @override
   State<WorkTrackerApp> createState() => _WorkTrackerAppState();
 }
@@ -120,7 +117,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
 
     await showDialog(
       context: context,
-      barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           double _parseTime(String t) {
@@ -138,28 +134,23 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             setDialogState(() {});
           }
 
-          void save() async {
-            // 先关闭对话框
+          // 🔧 核心修复：保存逻辑
+          void save() {
+            // 1. 先更新主界面状态 + 改变 Key 强制重绘日历
+            setState(() {
+              _workData[dateStr] = {
+                'type': isRest ? 'rest' : 'work',
+                'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
+              };
+              _calendarRefreshKey++;
+            });
+            
+            // 2. 异步保存文件，不阻塞 UI
+            _saveData();
+            _updateMonthlyTotal();
+            
+            // 3. 最后关闭对话框
             Navigator.pop(ctx);
-            
-            // 强制等待一帧，确保对话框完全关闭
-            await Future.delayed(const Duration(milliseconds: 100));
-            
-            // 然后更新数据并刷新
-            if (mounted) {
-              setState(() {
-                _workData[dateStr] = {
-                  'type': isRest ? 'rest' : 'work',
-                  'hours': isRest ? 0 : (double.tryParse(finalHoursStr) ?? 0),
-                };
-                _calendarRefreshKey++;
-              });
-              await _saveData();
-              _updateMonthlyTotal();
-              
-              // 再次强制刷新
-              setState(() {});
-            }
           }
 
           return AlertDialog(
@@ -226,7 +217,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                       ),
                     ),
                   const SizedBox(height: 16),
-                  
                   const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
                   const SizedBox(height: 8),
                   TextField(
@@ -279,9 +269,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
               ),
             ),
-            
             Expanded(
               child: TableCalendar(
+                // 🔑 强制刷新 Key
                 key: ValueKey(_calendarRefreshKey),
                 firstDay: DateTime.utc(2020, 1, 1),
                 lastDay: DateTime.utc(2035, 12, 31),
@@ -295,6 +285,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 },
                 locale: 'zh_CN',
                 availableGestures: AvailableGestures.all,
+                // 🔄 辅助触发单元格重绘
+                eventLoader: (day) => [],
                 headerStyle: const HeaderStyle(
                   formatButtonVisible: false, 
                   titleCentered: true,
@@ -309,7 +301,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                   selectedTextStyle: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
                   todayTextStyle: const TextStyle(color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
                   weekendTextStyle: const TextStyle(color: Color(0xFF10B981)),
-                  markersMaxCount: 1,
                 ),
                 calendarBuilders: CalendarBuilders(
                   defaultBuilder: (context, day, focusedDay) {
@@ -353,7 +344,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 ),
               ),
             ),
-            
             Container(
               margin: const EdgeInsets.fromLTRB(20, 10, 20, 30),
               padding: const EdgeInsets.all(20),
@@ -382,9 +372,7 @@ class _TimeInputField extends StatelessWidget {
   final String text;
   final ValueChanged<String> onChanged;
   final bool numeric;
-  
   const _TimeInputField({required this.text, required this.onChanged, this.numeric = false});
-
   @override
   Widget build(BuildContext context) {
     return TextField(
