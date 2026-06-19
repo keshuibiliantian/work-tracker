@@ -280,41 +280,28 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     }
   }
 
-  // --- 🌟 核心：获取公共存储并创建“考勤”文件夹 ---
   Future<Directory> _getExportDir() async {
     if (Platform.isAndroid) {
-      // 申请所有文件访问权限 (Android 11+)
       var manageStatus = await Permission.manageExternalStorage.status;
-      if (!manageStatus.isGranted) {
-        manageStatus = await Permission.manageExternalStorage.request();
-      }
-      // 申请普通存储权限 (Android 10及以下)
+      if (!manageStatus.isGranted) manageStatus = await Permission.manageExternalStorage.request();
       var storageStatus = await Permission.storage.status;
-      if (!storageStatus.isGranted) {
-        storageStatus = await Permission.storage.request();
-      }
+      if (!storageStatus.isGranted) storageStatus = await Permission.storage.request();
     }
 
     Directory baseDir;
     if (Platform.isAndroid) {
-      // 定位安卓公共存储根目录
       baseDir = Directory('/storage/emulated/0');
-      if (!await baseDir.exists()) {
-        baseDir = Directory('/sdcard'); // 兼容部分老机型
-      }
+      if (!await baseDir.exists()) baseDir = Directory('/sdcard');
     } else {
       baseDir = await getApplicationDocumentsDirectory();
     }
 
-    // 自动创建“考勤”文件夹
     final exportDir = Directory('${baseDir.path}/考勤');
-    if (!await exportDir.exists()) {
-      await exportDir.create(recursive: true);
-    }
+    if (!await exportDir.exists()) await exportDir.create(recursive: true);
     return exportDir;
   }
 
-  // --- 导出表格 ---
+  // --- 🌟 优化：导出表格 (0值留空，增加总加班统计) ---
   Future<void> _exportAsTable() async {
     try {
       final dir = await _getExportDir();
@@ -323,28 +310,48 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
       final lastDay = DateTime(year, month + 1, 0).day;
       List<List<dynamic>> rows = [];
       rows.add(['日期', '状态', '实际工作时长', '加班时长']);
+      
       int totalWorkDays = 0;
       double totalHours = 0.0;
+      double totalOvertime = 0.0;
 
       for (int day = 1; day <= lastDay; day++) {
         final dateStr = _formatDate(DateTime(year, month, day));
         final data = _workData[dateStr];
-        String status = ''; double hours = 0.0; double overtime = 0.0;
-        if (data != null) {
+        String status = ''; 
+        double hours = 0.0; 
+        double overtime = 0.0;
+        
+        if (data != null && data['type'] == 'work') {
+          status = '√'; 
+          hours = (data['hours'] as num).toDouble(); 
+          totalWorkDays++; 
+          totalHours += hours; 
+          if (hours > 8.0) {
+            overtime = hours - 8.0;
+            totalOvertime += overtime;
+          }
+        } else if (data != null) {
           switch (data['type']) {
-            case 'work': status = '√'; hours = (data['hours'] as num).toDouble(); totalWorkDays++; totalHours += hours; break;
             case 'rest': status = '○'; break;
             case 'leave': status = '△'; break;
             case 'vacation': status = '×'; break;
           }
-          if (hours > 8.0) overtime = hours - 8.0;
         }
-        rows.add(['${day}日', status, '${hours.toStringAsFixed(1)}h', '${overtime.toStringAsFixed(1)}h']);
+        
+        // 核心优化：0值留空
+        String hoursStr = hours > 0 ? '${hours.toStringAsFixed(1)}h' : '';
+        String overtimeStr = overtime > 0 ? '${overtime.toStringAsFixed(1)}h' : '';
+        
+        rows.add(['${day}日', status, hoursStr, overtimeStr]);
       }
-      rows.add([]);
-      rows.add(['统计', '出勤天数: $totalWorkDays天', '总工时: ${totalHours.toStringAsFixed(1)}h', '']);
-      String csv = const ListToCsvConverter().convert(rows);
       
+      rows.add([]); // 空行分隔
+      String totalHoursStr = totalHours > 0 ? '${totalHours.toStringAsFixed(1)}h' : '';
+      String totalOvertimeStr = totalOvertime > 0 ? '${totalOvertime.toStringAsFixed(1)}h' : '';
+      rows.add(['合计', '出勤: $totalWorkDays天', '总工时: $totalHoursStr', '总加班: $totalOvertimeStr']);
+      
+      String csv = const ListToCsvConverter().convert(rows);
       final file = File('${dir.path}/考勤表_${year}年${month}月.csv');
       await file.writeAsBytes([0xEF, 0xBB, 0xBF] + utf8.encode(csv));
       
@@ -360,7 +367,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     }
   }
 
-  // --- 导出图片 ---
   Future<void> _exportAsImage() async {
     try {
       final dir = await _getExportDir();
@@ -385,7 +391,71 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     }
   }
 
-  // --- 🌟 新增：数据备份与恢复功能 ---
+  // --- 🌟 优化：截图用的隐藏表格组件 (与CSV逻辑完全同步) ---
+  Widget _buildExportTableWidget() {
+    final year = _focusedDay.year;
+    final month = _focusedDay.month;
+    final lastDay = DateTime(year, month + 1, 0).day;
+    int totalWorkDays = 0;
+    double totalHours = 0.0;
+    double totalOvertime = 0.0;
+    
+    List<TableRow> dataRows = [];
+    for (int day = 1; day <= lastDay; day++) {
+      final dateStr = _formatDate(DateTime(year, month, day));
+      final data = _workData[dateStr];
+      String status = ''; 
+      double hours = 0.0; 
+      double overtime = 0.0;
+      
+      if (data != null && data['type'] == 'work') {
+        status = '√'; 
+        hours = (data['hours'] as num).toDouble(); 
+        totalWorkDays++; 
+        totalHours += hours;
+        if (hours > 8.0) {
+           overtime = hours - 8.0;
+           totalOvertime += overtime;
+        }
+      } else if (data != null) {
+        switch (data['type']) {
+          case 'rest': status = '○'; break; 
+          case 'leave': status = '△'; break; 
+          case 'vacation': status = '×'; break;
+        }
+      }
+      
+      String hoursStr = hours > 0 ? '${hours.toStringAsFixed(1)}h' : '';
+      String overtimeStr = overtime > 0 ? '${overtime.toStringAsFixed(1)}h' : '';
+      
+      dataRows.add(_buildTableRow(['${day}日', status, hoursStr, overtimeStr]));
+    }
+
+    String totalHoursStr = totalHours > 0 ? '${totalHours.toStringAsFixed(1)}h' : '';
+    String totalOvertimeStr = totalOvertime > 0 ? '${totalOvertime.toStringAsFixed(1)}h' : '';
+
+    return Container(
+      width: 800, color: Colors.white, padding: const EdgeInsets.all(20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('考勤表格 - ${year}年${month}月', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF3B82F6))),
+        const SizedBox(height: 20),
+        Table(border: TableBorder.all(color: Colors.black, width: 1), children: [
+          _buildTableRow(['日期', '状态', '实际工作时长', '加班时长'], isHeader: true),
+          ...dataRows,
+          _buildTableRow(['合计', '出勤: $totalWorkDays天', '总工时: $totalHoursStr', '总加班: $totalOvertimeStr'], isHeader: true),
+        ]),
+      ]),
+    );
+  }
+
+  TableRow _buildTableRow(List<String> cells, {bool isHeader = false}) {
+    return TableRow(decoration: isHeader ? const BoxDecoration(color: Color(0xFFDBEAFE)) : null,
+      children: cells.map((cell) => Padding(padding: const EdgeInsets.all(8.0),
+        child: Text(cell, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: isHeader ? FontWeight.bold : FontWeight.normal)),
+      )).toList(),
+    );
+  }
+
   void _backupData() {
     final jsonStr = json.encode(_workData);
     Clipboard.setData(ClipboardData(text: jsonStr));
@@ -421,47 +491,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
         const SnackBar(content: Text('❌ 剪贴板为空！请先复制备份数据。'), backgroundColor: Colors.red),
       );
     }
-  }
-
-  Widget _buildExportTableWidget() {
-    final year = _focusedDay.year;
-    final month = _focusedDay.month;
-    final lastDay = DateTime(year, month + 1, 0).day;
-    int totalWorkDays = 0;
-    double totalHours = 0.0;
-    return Container(
-      width: 800, color: Colors.white, padding: const EdgeInsets.all(20),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('考勤表格 - ${year}年${month}月', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF3B82F6))),
-        const SizedBox(height: 20),
-        Table(border: TableBorder.all(color: Colors.black, width: 1), children: [
-          _buildTableRow(['日期', '状态', '实际工作时长', '加班时长'], isHeader: true),
-          ...List.generate(lastDay, (index) {
-            final day = index + 1;
-            final dateStr = _formatDate(DateTime(year, month, day));
-            final data = _workData[dateStr];
-            String status = ''; double hours = 0.0; double overtime = 0.0;
-            if (data != null) {
-              switch (data['type']) {
-                case 'work': status = '√'; hours = (data['hours'] as num).toDouble(); totalWorkDays++; totalHours += hours; break;
-                case 'rest': status = '○'; break; case 'leave': status = '△'; break; case 'vacation': status = '×'; break;
-              }
-              if (hours > 8.0) overtime = hours - 8.0;
-            }
-            return _buildTableRow(['${day}日', status, '${hours.toStringAsFixed(1)}h', '${overtime.toStringAsFixed(1)}h']);
-          }),
-          _buildTableRow(['统计', '出勤: $totalWorkDays天', '总工时: ${totalHours.toStringAsFixed(1)}h', ''], isHeader: true),
-        ]),
-      ]),
-    );
-  }
-
-  TableRow _buildTableRow(List<String> cells, {bool isHeader = false}) {
-    return TableRow(decoration: isHeader ? const BoxDecoration(color: Color(0xFFDBEAFE)) : null,
-      children: cells.map((cell) => Padding(padding: const EdgeInsets.all(8.0),
-        child: Text(cell, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: isHeader ? FontWeight.bold : FontWeight.normal)),
-      )).toList(),
-    );
   }
 
   @override
