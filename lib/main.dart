@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:open_file/open_file.dart';
 import 'package:csv/csv.dart';
 
@@ -30,11 +29,7 @@ class MyApp extends StatelessWidget {
       ],
       supportedLocales: const [Locale('zh', 'CN')],
       locale: const Locale('zh', 'CN'),
-      theme: ThemeData(
-        fontFamily: 'sans-serif',
-        colorSchemeSeed: const Color(0xFF3B82F6),
-        useMaterial3: true,
-      ),
+      theme: ThemeData(fontFamily: 'sans-serif', colorSchemeSeed: const Color(0xFF3B82F6), useMaterial3: true),
       home: const WorkTrackerApp(),
       debugShowCheckedModeBanner: false,
     );
@@ -53,8 +48,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   double _monthlyTotal = 0.0;
-  
-  // 用于截图的 GlobalKey
   final GlobalKey _exportTableKey = GlobalKey();
 
   @override
@@ -118,11 +111,11 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     String finalHoursStr = '0.0';
     String selectedType = 'work';
 
+    // 修复2：完美回填已设置的数据
     if (existing != null) {
-      final hours = existing['hours'] as num;
-      final type = existing['type'] as String;
-      selectedType = type;
-      finalHoursStr = (type == 'rest' || hours == 0) ? '0.0' : hours.toString();
+      selectedType = existing['type'] as String? ?? 'work';
+      final hours = (existing['hours'] as num?)?.toDouble() ?? 0.0;
+      finalHoursStr = hours > 0 ? hours.toStringAsFixed(1) : '0.0';
     }
 
     return await showDialog<bool>(
@@ -149,33 +142,62 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
 
           void save() {
             final hours = double.tryParse(finalHoursStr) ?? 0.0;
-            // 如果选了上班但没填时间，默认按0处理；如果选了其他状态，强制按0处理（除非手动填了）
-            final realType = (selectedType == 'work' && hours > 0) ? 'work' : 
-                             (selectedType == 'work' ? 'rest' : selectedType);
-            final realHours = realType == 'work' ? hours : 0.0;
+            final realType = selectedType;
+            // 修复3：非上班状态，工时强制为0
+            final realHours = (realType == 'work') ? hours : 0.0;
 
             _workData[dateStr] = {'type': realType, 'hours': realHours};
             _saveData();
             Navigator.pop(ctx, true);
           }
 
+          // 修复1：自定义高灵敏度胶囊按钮
+          Widget buildChip(String label, String value) {
+            final isSelected = selectedType == value;
+            return GestureDetector(
+              onTap: () {
+                selectedType = value;
+                setDialogState(() {});
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFF3B82F6) : Colors.grey[200],
+                  borderRadius: BorderRadius.circular(25),
+                  border: Border.all(color: isSelected ? const Color(0xFF3B82F6) : Colors.grey[300]!, width: 1.5)
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.black87,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            );
+          }
+
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Text('${date.month}月${date.day}日 工时详情', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            title: Text('${date.month}月${date.day}日 状态与工时', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children:[
+                  const Text('选择当日状态：', style: TextStyle(fontSize: 16, color: Colors.grey)),
+                  const SizedBox(height: 12),
                   Wrap(
-                    spacing: 8, runSpacing: 8,
+                    spacing: 12, runSpacing: 12,
                     children: [
-                      _buildRadio('上班', 'work', selectedType, setDialogState),
-                      _buildRadio('休息', 'rest', selectedType, setDialogState),
-                      _buildRadio('调休', 'leave', selectedType, setDialogState),
-                      _buildRadio('请假', 'vacation', selectedType, setDialogState),
+                      buildChip('上班', 'work'),
+                      buildChip('休息', 'rest'),
+                      buildChip('调休', 'leave'),
+                      buildChip('请假', 'vacation'),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   if (selectedType == 'work') ...[
                     Container(
                       padding: const EdgeInsets.all(16),
@@ -183,38 +205,41 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children:[
-                          const Text('🕒 工作时间范围', style: TextStyle(fontSize: 16)),
+                          const Text('🕒 工作时间范围', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
                           Row(children:[
                             Expanded(child: _TimeInputField(initialText: startStr, onChanged: (v) => startStr = v)),
                             const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('至')),
                             Expanded(child: _TimeInputField(initialText: endStr, onChanged: (v) => endStr = v)),
                           ]),
                           const SizedBox(height: 12),
-                          const Text('☕ 中途休息 (小时)'),
+                          const Text('☕ 中途休息 (小时)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
                           _TimeInputField(initialText: breakStr, onChanged: (v) => breakStr = v, numeric: true),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 16),
                           SizedBox(
                             width: double.infinity, height: 50,
                             child: ElevatedButton(
                               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFF6FF), foregroundColor: const Color(0xFF3B82F6)),
-                              onPressed: calcHours, child: const Text('计算并填入', style: TextStyle(fontWeight: FontWeight.bold)),
+                              onPressed: calcHours, child: const Text('自动计算并填入', style: TextStyle(fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
                   ],
-                  const Text('✍ 确认最终工时', style: TextStyle(fontSize: 16)),
+                  const Text('✍ 确认最终工时 (可手动修改)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   TextField(
                     decoration: InputDecoration(
                       filled: true, fillColor: Colors.white,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      suffixText: '小时',
                     ),
                     controller: TextEditingController(text: finalHoursStr),
                     onChanged: (value) => finalHoursStr = value,
-                    style: const TextStyle(fontSize: 25, color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 24, color: Color(0xFF3B82F6), fontWeight: FontWeight.bold),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   ),
                 ],
@@ -233,18 +258,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
           );
         },
       ),
-    );
-  }
-
-  Widget _buildRadio(String label, String value, String groupValue, StateSetter setState) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: groupValue == value,
-      onSelected: (selected) {
-        if (selected) setState(() => groupValue = value); // 这里有个闭包问题，直接改外部变量
-      },
-      selectedColor: const Color(0xFFDBEAFE),
-      labelStyle: TextStyle(color: groupValue == value ? const Color(0xFF3B82F6) : Colors.black),
     );
   }
 
@@ -277,14 +290,15 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     );
   }
 
+  // 修复3：日历界面显示中文
   String _getStatusLabel(Map<String, dynamic> data) {
     final type = data['type'] as String;
-    final hours = data['hours'] as double;
+    final hours = (data['hours'] as num?)?.toDouble() ?? 0.0;
     switch (type) {
-      case 'work': return '${hours.toStringAsFixed(1)}h';
-      case 'rest': return '○';
-      case 'leave': return '△';
-      case 'vacation': return '×';
+      case 'work': return hours > 0 ? '${hours.toStringAsFixed(1)}h' : '休';
+      case 'rest': return '休息';
+      case 'leave': return '调休';
+      case 'vacation': return '请假';
       default: return '';
     }
   }
@@ -293,21 +307,14 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     switch (data['type']) {
       case 'work': return const Color(0xFF10B981);
       case 'rest': return const Color(0xFF94A3B8);
-      case 'leave': return const Color(0xFF64748B);
+      case 'leave': return const Color(0xFFF59E0B);
       case 'vacation': return const Color(0xFFEF4444);
       default: return Colors.transparent;
     }
   }
 
   // --- 导出功能 ---
-  
-  Future<void> _requestPermission() async {
-    await Permission.storage.request();
-    await Permission.manageExternalStorage.request();
-  }
-
   Future<void> _exportAsTable() async {
-    await _requestPermission();
     final year = _focusedDay.year;
     final month = _focusedDay.month;
     final lastDay = DateTime(year, month + 1, 0).day;
@@ -327,7 +334,8 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
 
       if (data != null) {
         switch (data['type']) {
-          case 'work': status = '√'; hours = data['hours']; totalWorkDays++; totalHours += hours; break;
+          // 修复3：导出表格时使用符号
+          case 'work': status = '√'; hours = (data['hours'] as num).toDouble(); totalWorkDays++; totalHours += hours; break;
           case 'rest': status = '○'; break;
           case 'leave': status = '△'; break;
           case 'vacation': status = '×'; break;
@@ -344,21 +352,17 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/考勤表_${year}年${month}月.csv');
-    // 添加 BOM 头防止 Excel 打开中文乱码
     await file.writeAsBytes([0xEF, 0xBB, 0xBF] + utf8.encode(csv));
     
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('表格已保存至: ${file.path}')));
+      // 修复4：调起系统面板，让用户选择用WPS打开或分享给微信/保存
       OpenFile.open(file.path);
     }
   }
 
   Future<void> _exportAsImage() async {
-    await _requestPermission();
     try {
-      // 强制渲染隐藏的表格
       await Future.delayed(const Duration(milliseconds: 500));
-      
       RenderRepaintBoundary boundary = _exportTableKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 3.0);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -369,7 +373,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
       await file.writeAsBytes(pngBytes);
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('图片已保存至: ${file.path}')));
         OpenFile.open(file.path);
       }
     } catch (e) {
@@ -379,19 +382,15 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     }
   }
 
-  // 构建用于截图的隐藏表格 Widget
   Widget _buildExportTableWidget() {
     final year = _focusedDay.year;
     final month = _focusedDay.month;
     final lastDay = DateTime(year, month + 1, 0).day;
-    
     int totalWorkDays = 0;
     double totalHours = 0.0;
 
     return Container(
-      width: 800,
-      color: Colors.white,
-      padding: const EdgeInsets.all(20),
+      width: 800, color: Colors.white, padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -399,12 +398,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
           const SizedBox(height: 20),
           Table(
             border: TableBorder.all(color: Colors.black, width: 1),
-            columnWidths: const {
-              0: FlexColumnWidth(1),
-              1: FlexColumnWidth(1),
-              2: FlexColumnWidth(2),
-              3: FlexColumnWidth(2),
-            },
             children: [
               _buildTableRow(['日期', '状态', '实际工作时长', '加班时长'], isHeader: true),
               ...List.generate(lastDay, (index) {
@@ -414,10 +407,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 String status = '';
                 double hours = 0.0;
                 double overtime = 0.0;
-
                 if (data != null) {
                   switch (data['type']) {
-                    case 'work': status = '√'; hours = data['hours']; totalWorkDays++; totalHours += hours; break;
+                    case 'work': status = '√'; hours = (data['hours'] as num).toDouble(); totalWorkDays++; totalHours += hours; break;
                     case 'rest': status = '○'; break;
                     case 'leave': status = '△'; break;
                     case 'vacation': status = '×'; break;
@@ -437,12 +429,10 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
   TableRow _buildTableRow(List<String> cells, {bool isHeader = false}) {
     return TableRow(
       decoration: isHeader ? const BoxDecoration(color: Color(0xFFDBEAFE)) : null,
-      children: cells.map((cell) {
-        return Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Text(cell, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: isHeader ? FontWeight.bold : FontWeight.normal)),
-        );
-      }).toList(),
+      children: cells.map((cell) => Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Text(cell, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: isHeader ? FontWeight.bold : FontWeight.normal)),
+      )).toList(),
     );
   }
 
@@ -488,7 +478,6 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       Expanded(child: ElevatedButton(onPressed: _exportAsTable, style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, minimumSize: const Size(0, 48)), child: const Text('导出表格', style: TextStyle(color: Colors.white)))),
                       const SizedBox(width: 20),
@@ -499,13 +488,9 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 const SizedBox(height: 20),
               ],
             ),
-            // 隐藏的截图区域 (放在屏幕外)
             Positioned(
               left: -9999, top: 0,
-              child: RepaintBoundary(
-                key: _exportTableKey,
-                child: _buildExportTableWidget(),
-              ),
+              child: RepaintBoundary(key: _exportTableKey, child: _buildExportTableWidget()),
             ),
           ],
         ),
