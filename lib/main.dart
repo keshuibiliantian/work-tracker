@@ -1,10 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:excel/excel.dart';
+import 'package:pdf/pdf.dart' as pdf;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:image/image.dart' as img;
+import 'package:intl/intl.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,7 +30,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '记工时',
-      localizationsDelegates: const[
+      localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
@@ -40,6 +47,9 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+
+// 定义工作类型枚举
+enum WorkType { work, rest, leave, vacation }
 
 class WorkTrackerApp extends StatefulWidget {
   const WorkTrackerApp({super.key});
@@ -120,15 +130,17 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
     String endStr = '17:00';
     String breakStr = '1.0';
     String finalHoursStr = '0.0';
+    String selectedType = 'work';
 
     if (existing != null) {
       final hours = existing['hours'] as num;
       final type = existing['type'] as String;
-      // 根据保存的数据恢复状态
       if (type == 'rest' || hours == 0) {
         finalHoursStr = '0.0';
+        selectedType = 'rest';
       } else {
         finalHoursStr = hours.toString();
+        selectedType = type;
       }
     }
 
@@ -154,13 +166,11 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
             setDialogState(() {});
           }
 
-          // ✅ 核心修复：保存时以最终工时框的值为准
           void save() {
             final hours = double.tryParse(finalHoursStr) ?? 0.0;
             
             _workData[dateStr] = {
-              // 工时>0就是上班，工时=0就是休息
-              'type': hours > 0 ? 'work' : 'rest',
+              'type': selectedType,
               'hours': hours,
             };
             _saveData();
@@ -183,13 +193,18 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                     decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
                     child: Row(
                       children:[
-                        // 只显示提示，不再用单选框控制逻辑
-                        Expanded(
-                          child: Text(
-                            '💡 提示：工时>0为上班，工时=0为休息',
-                            style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                          ),
-                        ),
+                        Radio<String>(value: 'work', groupValue: selectedType, 
+                          onChanged: (v) => setDialogState(() => selectedType = 'work')),
+                        const Text('上班', style: TextStyle(fontSize: 18)),
+                        Radio<String>(value: 'rest', groupValue: selectedType, 
+                          onChanged: (v) => setDialogState(() => selectedType = 'rest')),
+                        const Text('休息', style: TextStyle(fontSize: 18)),
+                        Radio<String>(value: 'leave', groupValue: selectedType, 
+                          onChanged: (v) => setDialogState(() => selectedType = 'leave')),
+                        const Text('调休', style: TextStyle(fontSize: 18)),
+                        Radio<String>(value: 'vacation', groupValue: selectedType, 
+                          onChanged: (v) => setDialogState(() => selectedType = 'vacation')),
+                        const Text('请假', style: TextStyle(fontSize: 18)),
                       ],
                     ),
                   ),
@@ -304,16 +319,51 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
           if (data != null) ...[
             const SizedBox(height: 4),
             Text(
-              data['type'] == 'work' && (data['hours'] as num) > 0 ? '${data['hours']}h' : '休',
+              _getStatusLabel(data),
               style: TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w600,
-                color: data['type'] == 'work' ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+                color: _getStatusColor(data),
               ),
             ),
           ],
         ],
       ),
     );
+  }
+
+  String _getStatusLabel(Map<String, dynamic> data) {
+    final type = data['type'] as String;
+    final hours = data['hours'] as double;
+    
+    switch (type) {
+      case 'work':
+        return '${hours.toStringAsFixed(1)}h';
+      case 'rest':
+        return '○';
+      case 'leave':
+        return '△';
+      case 'vacation':
+        return '×';
+      default:
+        return '';
+    }
+  }
+
+  Color _getStatusColor(Map<String, dynamic> data) {
+    final type = data['type'] as String;
+    
+    switch (type) {
+      case 'work':
+        return const Color(0xFF10B981);
+      case 'rest':
+        return const Color(0xFF94A3B8);
+      case 'leave':
+        return const Color(0xFF64748B);
+      case 'vacation':
+        return const Color(0xEF4444);
+      default:
+        return Colors.transparent;
+    }
   }
 
   @override
@@ -388,10 +438,290 @@ class _WorkTrackerAppState extends State<WorkTrackerApp> {
                 ],
               ),
             ),
+            // 导出按钮
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton(
+                    onPressed: () => _exportAsTable(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      minimumSize: const Size(120, 48),
+                    ),
+                    child: const Text('导出表格', style: TextStyle(fontSize: 16)),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => _exportAsImage(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      minimumSize: const Size(120, 48),
+                    ),
+                    child: const Text('导出图片', style: TextStyle(fontSize: 16)),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  // 导出为Excel表格
+  Future<void> _exportAsTable() async {
+    try {
+      // 1. 获取当前月份数据
+      final currentDate = DateTime.now();
+      final year = currentDate.year;
+      final month = currentDate.month;
+      final lastDay = DateTime(year, month + 1, 0).day;
+      
+      // 2. 创建Excel工作簿
+      var excel = Excel.createExcel();
+      var sheet = excel.worksheets[0];
+      
+      // 3. 设置表头
+      sheet.cell(CellIndex.indexFromA1('A1')).value = '日期';
+      sheet.cell(CellIndex.indexFromA1('B1')).value = '状态';
+      sheet.cell(CellIndex.indexFromA1('C1')).value = '实际工作时长';
+      sheet.cell(CellIndex.indexFromA1('D1')).value = '加班时长';
+      
+      // 4. 填充数据
+      int totalWorkDays = 0;
+      double totalHours = 0.0;
+      
+      for (int day = 1; day <= lastDay; day++) {
+        final date = DateTime(year, month, day);
+        final dateStr = _formatDate(date);
+        final data = _workData[dateStr];
+        final row = day + 1;
+        
+        // 日期
+        sheet.cell(CellIndex.indexFromA1('A$day')).value = '${day}日';
+        
+        // 状态
+        if (data != null) {
+          String statusSymbol;
+          switch (data['type']) {
+            case 'work': statusSymbol = '√'; break;
+            case 'rest': statusSymbol = '○'; break;
+            case 'leave': statusSymbol = '△'; break;
+            case 'vacation': statusSymbol = '×'; break;
+            default: statusSymbol = '';
+          }
+          sheet.cell(CellIndex.indexFromA1('B$day')).value = statusSymbol;
+          
+          // 工作时长
+          final hours = data['hours'] as double;
+          sheet.cell(CellIndex.indexFromA1('C$day')).value = '${hours}h';
+          
+          // 加班时长
+          final overtime = (hours > 8.0) ? (hours - 8.0) : 0.0;
+          sheet.cell(CellIndex.indexFromA1('D$day')).value = '${overtime}h';
+          
+          // 统计
+          if (data['type'] == 'work') {
+            totalWorkDays++;
+            totalHours += hours;
+          }
+        } else {
+          sheet.cell(CellIndex.indexFromA1('B$day')).value = '';
+          sheet.cell(CellIndex.indexFromA1('C$day')).value = '0.0h';
+          sheet.cell(CellIndex.indexFromA1('D$day')).value = '0.0h';
+        }
+      }
+      
+      // 5. 添加统计行
+      final totalRow = lastDay + 2;
+      sheet.cell(CellIndex.indexFromA1('C$totalRow')).value = '出勤天数';
+      sheet.cell(CellIndex.indexFromA1('D$totalRow')).value = '总工时';
+      
+      sheet.cell(CellIndex.indexFromA1('C${totalRow + 1}')).value = totalWorkDays;
+      sheet.cell(CellIndex.indexFromA1('D${totalRow + 1}')).value = '${totalHours}h';
+      
+      // 6. 保存文件
+      final dir = await getApplicationDocumentsDirectory();
+      final fileName = 'attendance_${year}_${month}.xlsx';
+      final filePath = '${dir.path}/$fileName';
+      final bytes = excel.save();
+      File(filePath).writeAsBytesSync(bytes);
+      
+      // 7. 提示用户
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('考勤表格导出成功！文件已保存至: $fileName')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出表格失败: $e')),
+      );
+    }
+  }
+
+  // 导出为图片
+  Future<void> _exportAsImage() async {
+    try {
+      // 1. 获取当前月份数据
+      final currentDate = DateTime.now();
+      final year = currentDate.year;
+      final month = currentDate.month;
+      final lastDay = DateTime(year, month + 1, 0).day;
+      
+      // 2. 创建图片
+      final imageWidth = 800;
+      final imageHeight = 500 + (lastDay * 30);
+      final image = img.Image(imageWidth, imageHeight);
+      
+      // 3. 绘制背景
+      img.fill(image, const img.Color(0xFFFFFFFF));
+      
+      // 4. 绘制标题
+      _drawText(image, '考勤表格 - ${year}年${month}月', 400, 40, 
+        fontSize: 24, color: img.Color(0xFF3B82F6), align: 'center');
+      
+      // 5. 绘制表格
+      final tableTop = 70;
+      final cellHeight = 30;
+      final cellWidth = imageWidth / 4;
+      
+      // 绘制表头
+      _drawCell(image, '日期', 0, tableTop, cellWidth, cellHeight, 
+        backgroundColor: img.Color(0xFF3B82F6), textColor: img.Color(0xFFFFFFFF));
+      _drawCell(image, '状态', cellWidth, tableTop, cellWidth, cellHeight, 
+        backgroundColor: img.Color(0xFF3B82F6), textColor: img.Color(0xFFFFFFFF));
+      _drawCell(image, '实际工作时长', 2 * cellWidth, tableTop, cellWidth, cellHeight, 
+        backgroundColor: img.Color(0xFF3B82F6), textColor: img.Color(0xFFFFFFFF));
+      _drawCell(image, '加班时长', 3 * cellWidth, tableTop, cellWidth, cellHeight, 
+        backgroundColor: img.Color(0xFF3B82F6), textColor: img.Color(0xFFFFFFFF));
+      
+      // 绘制数据行
+      for (int day = 1; day <= lastDay; day++) {
+        final date = DateTime(year, month, day);
+        final dateStr = _formatDate(date);
+        final data = _workData[dateStr] ?? {'type': 'work', 'hours': 0.0};
+        final hours = data['hours'] as double;
+        final overtime = (hours > 8.0) ? (hours - 8.0) : 0.0;
+        
+        String statusSymbol;
+        switch (data['type']) {
+          case 'work': statusSymbol = '√'; break;
+          case 'rest': statusSymbol = '○'; break;
+          case 'leave': statusSymbol = '△'; break;
+          case 'vacation': statusSymbol = '×'; break;
+          default: statusSymbol = '';
+        }
+        
+        final rowTop = tableTop + cellHeight + (day - 1) * cellHeight;
+        
+        _drawCell(image, '${day}日', 0, rowTop, cellWidth, cellHeight);
+        _drawCell(image, statusSymbol, cellWidth, rowTop, cellWidth, cellHeight);
+        _drawCell(image, '${hours}h', 2 * cellWidth, rowTop, cellWidth, cellHeight);
+        _drawCell(image, '${overtime}h', 3 * cellWidth, rowTop, cellWidth, cellHeight);
+      }
+      
+      // 6. 绘制统计行
+      final statsTop = tableTop + cellHeight + lastDay * cellHeight + 10;
+      _drawCell(image, '', 0, statsTop, 2 * cellWidth, cellHeight);
+      _drawCell(image, '出勤天数', 2 * cellWidth, statsTop, cellWidth, cellHeight);
+      _drawCell(image, '总工时', 3 * cellWidth, statsTop, cellWidth, cellHeight);
+      
+      final statsTop2 = statsTop + cellHeight;
+      _drawCell(image, '', 0, statsTop2, 2 * cellWidth, cellHeight);
+      _drawCell(image, _getTotalWorkDays().toString(), 2 * cellWidth, statsTop2, cellWidth, cellHeight);
+      _drawCell(image, '${_getTotalHours()}h', 3 * cellWidth, statsTop2, cellWidth, cellHeight);
+      
+      // 7. 保存图片
+      final dir = await getApplicationDocumentsDirectory();
+      final fileName = 'attendance_${year}_${month}.png';
+      final filePath = '${dir.path}/$fileName';
+      File(filePath).writeAsBytesSync(img.encodePng(image));
+      
+      // 8. 提示用户
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('考勤图片导出成功！文件已保存至: $fileName')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出图片失败: $e')),
+      );
+    }
+  }
+  
+  // 辅助方法：绘制表格单元格
+  void _drawCell(img.Image image, String text, double x, double y, double width, double height,
+      {img.Color? backgroundColor, img.Color? textColor}) {
+    // 绘制背景
+    if (backgroundColor != null) {
+      img.fillRect(image, 
+        x.toInt(), y.toInt(), width.toInt(), height.toInt(),
+        backgroundColor);
+    }
+    
+    // 绘制边框
+    img.drawRoundedRect(image, 
+      x.toInt(), y.toInt(), width.toInt(), height.toInt(),
+      2, img.Color(0xFF000000));
+    
+    // 绘制文本
+    _drawText(image, text, x + width / 2, y + height / 2, 
+      fontSize: 12, color: textColor ?? img.Color(0xFF000000), align: 'center');
+  }
+  
+  // 辅助方法：绘制文本
+  void _drawText(img.Image image, String text, double x, double y, 
+      {double fontSize = 12, img.Color color = const img.Color(0xFF000000), String align = 'center'}) {
+    final font = img.Font.ubuntu();
+    final textWidth = font.widthOf(text) * fontSize / 12;
+    
+    if (align == 'center') {
+      x -= textWidth / 2;
+    } else if (align == 'right') {
+      x -= textWidth;
+    }
+    
+    img.drawString(image, font, x.toInt(), y.toInt(), 
+      text, 
+      fontSize: fontSize, 
+      color: color);
+  }
+  
+  // 获取总出勤天数
+  int _getTotalWorkDays() {
+    final currentDate = DateTime.now();
+    final year = currentDate.year;
+    final month = currentDate.month;
+    final lastDay = DateTime(year, month + 1, 0).day;
+    
+    int count = 0;
+    for (int day = 1; day <= lastDay; day++) {
+      final date = DateTime(year, month, day);
+      final dateStr = _formatDate(date);
+      final data = _workData[dateStr];
+      if (data != null && data['type'] == 'work') {
+        count++;
+      }
+    }
+    return count;
+  }
+  
+  // 获取总工时
+  double _getTotalHours() {
+    final currentDate = DateTime.now();
+    final year = currentDate.year;
+    final month = currentDate.month;
+    final lastDay = DateTime(year, month + 1, 0).day;
+    
+    double total = 0;
+    for (int day = 1; day <= lastDay; day++) {
+      final date = DateTime(year, month, day);
+      final dateStr = _formatDate(date);
+      final data = _workData[dateStr];
+      if (data != null && data['type'] == 'work') {
+        total += data['hours'] as double;
+      }
+    }
+    return total;
   }
 }
 
